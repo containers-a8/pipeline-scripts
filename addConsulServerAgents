@@ -1,0 +1,82 @@
+#!/bin/bash
+# The following colors have been defined to help with presentation of logs: green, red, label_color, no_color.  
+echo -e "${label_color}Starting build script${no_color}"
+
+# The IBM Container Service CLI (ice), Git client (git), IDS Inventory CLI (ids-inv) and Python 2.7.3 (python) have been installed.
+# Based on the organization and space selected in the Job credentials are in place for both IBM Container Service and IBM Bluemix 
+#####################
+# Run unit tests    #
+#####################
+echo -e "${label_color}No unit tests cases have been checked in ${no_color}"
+
+######################################
+# Build Container via Dockerfile     #
+######################################
+
+# REGISTRY_URL=${CCS_REGISTRY_HOST}/${NAMESPACE}
+# FULL_REPOSITORY_NAME=${REGISTRY_URL}/${IMAGE_NAME}:${APPLICATION_VERSION}
+# If you wish to receive slack notifications, set SLACK_WEBHOOK_PATH as a property on the stage.
+
+
+cf ic cpi consul ${REGISTRY_URL}/${IMAGE_NAME}
+
+
+######################################################################################
+# Copy any artifacts that will be needed for deployment and testing to $WORKSPACE    #
+######################################################################################
+echo "IMAGE_NAME=${FULL_REPOSITORY_NAME}" >> $ARCHIVE_DIR/build.properties
+
+################################################
+# Stop and remove the containers if they exist from a previous run  #
+################################################
+log_and_echo "$LABEL" "Stopping consul agent containers if they are running...." "${NODE_NAME_1}"
+log_and_echo "$LABEL"  "Executing command  -" "cf ic stop ${NODE_NAME_1}"
+
+cf ic stop ${NODE_NAME_1}
+
+log_and_echo "$LABEL" "Removing consul agent containers if they are running...." "${NODE_NAME_1}"
+log_and_echo "$LABEL"  "Executing command  -" "cf ic rm ${NODE_NAME_1}"
+
+sleep 10
+
+cf ic rm ${NODE_NAME_1}
+
+################################################
+# Start the Consul Servers from the image      #
+################################################
+
+# REGISTRY_URL=${CCS_REGISTRY_HOST}/${NAMESPACE}
+# FULL_REPOSITORY_NAME=${REGISTRY_URL}/${IMAGE_NAME}:${APPLICATION_VERSION}
+
+log_and_echo "$LABEL" "Starting the first consul agent in server mode...." "${NODE_NAME_1}"
+
+log_and_echo "$LABEL" "Executing command - " "cf ic run  -P -d ${REGISTRY_URL}/${IMAGE_NAME} --name ${NODE_NAME_1}  agent -server -client=0.0.0.0 -node=${NODE_NAME_1} -bootstrap-expect=${NUMBER_OF_SERVER_AGENTS}  -data-dir=/tmp/consul -ui-dir=/ui  -ui" 
+cf ic run -P --name ${NODE_NAME_1} ${REGISTRY_URL}/${IMAGE_NAME} agent -server -client=0.0.0.0 -node=${NODE_NAME_1} -bootstrap-expect=${NUMBER_OF_SERVER_AGENTS}  -data-dir=/tmp/consul -ui -ui-dir=/ui
+
+log_and_echo "$LABEL" "Listing the running containers..."
+cf ic ps 
+
+
+log_and_echo "$LABEL" "Sleeping for a few seconds...."
+sleep 30
+
+################################################
+# Get  container ip for further interactions
+################################################
+
+log_and_echo "$LABEL" "Inspecting the container for information...."
+cf ic inspect ${NODE_NAME_1}
+
+log_and_echo "$LABEL" "Listing the IP Address of the container"
+CONSUL_IP=$(cf ic inspect -f '{{ .NetworkSettings.IPAddress }}' ${NODE_NAME_1})
+log_and_echo "$LABEL" "IP of the first consul server agent is:" "$CONSUL_IP"
+log_and_echo "$LABEL" $CONSUL_IP
+
+
+########################################################################################
+# Starting the other consul server agents and asking them to join the first server agent
+########################################################################################
+#log_and_echo "$LABEL" "Executing command - " "cf ic run  -P -d ${REGISTRY_URL}/${IMAGE_NAME} --name ${NODE_NAME_2}  agent -server -client=0.0.0.0 -node=${NODE_NAME_2} -bootstrap-expect=${NUMBER_OF_SERVER_AGENTS}  -data-dir=/tmp/consul -ui-dir=/ui  -ui -join=$CONSUL_IP”
+
+cf ic run -P --name ${NODE_NAME_2} ${REGISTRY_URL}/${IMAGE_NAME} agent -server -client=0.0.0.0 -node=${NODE_NAME_2} -bootstrap-expect=${NUMBER_OF_SERVER_AGENTS}  -data-dir=/tmp/consul -ui -ui-dir=/ui -join=$CONSUL_IP
+
